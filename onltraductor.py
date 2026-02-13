@@ -1,104 +1,84 @@
 import streamlit as st
-from openai import OpenAI
+import google.generativeai as genai
 import fitz  # PyMuPDF
 from docx import Document
 from io import BytesIO
 import time
 
-# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="TraductorProAI", page_icon="🌐", layout="wide")
 
-# --- SEGURIDAD: OPENAI API KEY ---
-client = None
-if "OPENAI_API_KEY" in st.secrets:
-    api_key = st.secrets["OPENAI_API_KEY"]
-    client = OpenAI(api_key=api_key)
+# --- CONEXIÓN SEGURA ---
+if "GEMINI_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    api_key = True
 else:
-    with st.sidebar:
-        st.title("🔐 Configuración OpenAI")
-        api_key = st.text_input("Introduce tu OpenAI API Key", type="password")
-        if api_key:
-            client = OpenAI(api_key=api_key)
+    st.error("⚠️ Configura la GEMINI_API_KEY en los Secrets de Streamlit.")
+    api_key = False
 
-# --- FUNCIONES DE LÓGICA ---
+# --- EL TRUCO PARA EVITAR EL "NOT FOUND" ---
+def traducir_bloque(bloque, idioma_destino):
+    # Lista de nombres posibles para el mismo modelo
+    modelos_disponibles = [
+        'gemini-1.5-flash', 
+        'models/gemini-1.5-flash', 
+        'gemini-pro',
+        'models/gemini-pro'
+    ]
+    
+    for nombre in modelos_disponibles:
+        try:
+            model = genai.GenerativeModel(nombre)
+            prompt = f"Traduce este texto al {idioma_destino}. Solo entrega la traducción:\n\n{bloque}"
+            response = model.generate_content(prompt)
+            if response.text:
+                return response.text
+        except Exception:
+            continue # Si este nombre falla, intenta con el siguiente
+    return "[Error: Google no respondió. Revisa si tu API Key es válida en Google AI Studio]"
 
+# --- FUNCIONES DE DOCUMENTO ---
 def extraer_texto_pdf(archivo):
     doc = fitz.open(stream=archivo.read(), filetype="pdf")
-    texto = ""
-    for pagina in doc:
-        texto += pagina.get_text()
-    return texto
+    return "\n".join([pagina.get_text() for pagina in doc])
 
-def dividir_texto(texto, limite_palabras=1500):
-    palabras = texto.split()
-    for i in range(0, len(palabras), limite_palabras):
-        yield " ".join(palabras[i:i + limite_palabras])
+def dividir_en_trozos(texto, palabras=800): # Trozos más pequeños son más seguros
+    lineas = texto.split()
+    for i in range(0, len(lineas), palabras):
+        yield " ".join(lineas[i:i + palabras])
 
-def traducir_con_openai(bloque, idioma_destino):
-    try:
-        # Usamos GPT-4o-mini: balance perfecto entre costo y calidad
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": f"Eres un traductor experto. Traduce el siguiente texto al {idioma_destino}. Solo devuelve la traducción final, mantén el formato profesional."},
-                {"role": "user", "content": bloque}
-            ],
-            temperature=0.3
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"\n[Error en OpenAI: {str(e)}]\n"
-
-def crear_docx(texto_traducido):
+def crear_docx(texto):
     doc = Document()
-    doc.add_heading('Traducción Profesional - TraductorProAI', 0)
-    for parrafo in texto_traducido.split('\n'):
-        if parrafo.strip():
-            doc.add_paragraph(parrafo)
-    
-    buffer = BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer
+    doc.add_heading('Traducción TraductorProAI', 0)
+    for p in texto.split('\n'):
+        if p.strip(): doc.add_paragraph(p)
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
 
 # --- INTERFAZ ---
-st.title("🌐 TraductorProAI")
-st.subheader("Impulsado por ChatGPT (GPT-4o)")
+st.title("🌐 TraductorProAI (Versión Gratuita)")
 
-if not client:
-    st.warning("⚠️ Por favor, configura tu API Key de OpenAI para continuar.")
-else:
-    archivo_pdf = st.file_uploader("Sube tu PDF para traducir", type=["pdf"])
-    idioma = st.selectbox("Idioma de destino", ["Inglés", "Español", "Francés", "Alemán", "Italiano", "Portugués"])
+if api_key:
+    archivo = st.file_uploader("Sube tu PDF", type=["pdf"])
+    idioma = st.selectbox("Idioma", ["Inglés", "Español", "Francés", "Alemán", "Italiano"])
 
-    if archivo_pdf and st.button("🚀 Iniciar Traducción Inteligente"):
-        texto_completo = extraer_texto_pdf(archivo_pdf)
-        fragmentos = list(dividir_texto(texto_completo))
-        
-        st.info(f"Documento listo. Traduciendo en {len(fragmentos)} bloques...")
+    if archivo and st.button("🚀 Traducir Ahora"):
+        texto_original = extraer_texto_pdf(archivo)
+        trozos = list(dividir_en_trozos(texto_original))
         
         traduccion_final = ""
-        barra = st.progress(0)
-
-        for idx, bloque in enumerate(fragmentos):
-            with st.spinner(f"Procesando bloque {idx+1} de {len(fragmentos)}..."):
-                resultado = traducir_con_openai(bloque, idioma)
+        progreso = st.progress(0)
+        
+        for idx, trozo in enumerate(trozos):
+            with st.spinner(f"Traduciendo parte {idx+1} de {len(trozos)}..."):
+                resultado = traducir_bloque(trozo, idioma)
                 traduccion_final += resultado + "\n\n"
-                barra.progress((idx + 1) / len(fragmentos))
-                # OpenAI es muy rápido, con 0.5s de espera es suficiente
-                time.sleep(0.5)
+                progreso.progress((idx + 1) / len(trozos))
+                # IMPORTANTE: Google gratis pide paciencia (4 segundos entre partes)
+                time.sleep(4) 
 
-        st.success("✅ ¡Traducción terminada!")
-        
-        with st.expander("Previsualizar traducción"):
-            st.write(traduccion_final)
-            
-        doc_word = crear_docx(traduccion_final)
-        
-        st.download_button(
-            label="📥 Descargar Documento Word",
-            data=doc_word,
-            file_name=f"Traduccion_ChatGPT_{idioma}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+        st.success("✅ ¡Listo!")
+        doc_final = crear_docx(traduccion_final)
+        st.download_button("📥 Descargar Word", doc_final, "Traduccion_Final.docx")
 

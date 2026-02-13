@@ -7,6 +7,7 @@ import time
 
 st.set_page_config(page_title="TraductorProAI", page_icon="🌐", layout="wide")
 
+api_key = None
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
@@ -16,7 +17,6 @@ else:
         api_key = st.text_input("Introduce tu Gemini API Key", type="password")
         if api_key:
             genai.configure(api_key=api_key)
-
 
 def extraer_texto_pdf(archivo):
     doc = fitz.open(stream=archivo.read(), filetype="pdf")
@@ -36,13 +36,13 @@ def traducir_bloque(bloque, idioma_destino):
     for nombre_modelo in modelos_a_probar:
         try:
             modelo = genai.GenerativeModel(nombre_modelo)
-            prompt = f"Traduce el siguiente texto al {idioma_destino}. Solo entrega la traducción:\n\n{bloque}"
+            prompt = f"Traduce el siguiente texto al {idioma_destino}. Solo entrega la traducción, sin textos extra:\n\n{bloque}"
             response = modelo.generate_content(prompt)
             return response.text
         except Exception:
             continue 
             
-    return "\n[Error: No se pudo conectar con ningún modelo de Gemini. Revisa tu API Key o región.]\n"
+    return "\n[Error: No se pudo conectar con los modelos de Gemini. Revisa tu API Key.]\n"
 
 def crear_docx(texto_traducido):
     doc = Document()
@@ -71,14 +71,14 @@ else:
         
         traduccion_final = ""
         barra_progreso = st.progress(0)
-        modelo = genai.GenerativeModel('gemini-1.5-flash')
 
         for idx, bloque in enumerate(bloques):
-            with st.spinner(f"Traduciendo fragmento {idx + 1}..."):
-                parte_traducida = traducir_bloque(modelo, bloque, idioma_destino)
-                traduccion_final += parte_traducida + "\n"
+            with st.spinner(f"Traduciendo fragmento {idx + 1} de {len(bloques)}..."):
+                parte_traducida = traducir_bloque(bloque, idioma_destino)
+                traduccion_final += parte_traducida + "\n\n"
+                
                 barra_progreso.progress((idx + 1) / len(bloques))
-                time.sleep(1)
+                time.sleep(2)
 
         st.success("¡Traducción completada con éxito!")
 
@@ -89,6 +89,6 @@ else:
             data=archivo_word,
             file_name="Traduccion_TraductorProAI.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-
         )
+
 

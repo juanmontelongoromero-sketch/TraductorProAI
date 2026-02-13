@@ -7,11 +7,15 @@ import time
 
 st.set_page_config(page_title="TraductorProAI", page_icon="🌐", layout="wide")
 
-with st.sidebar:
-    st.title("Configuración")
-    api_key = st.text_input("Introduce tu Gemini API Key", type="password")
-    if api_key:
-        genai.configure(api_key=api_key)
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    genai.configure(api_key=api_key)
+else:
+    with st.sidebar:
+        st.title("Configuración")
+        api_key = st.text_input("Introduce tu Gemini API Key", type="password")
+        if api_key:
+            genai.configure(api_key=api_key)
 
 
 def extraer_texto_pdf(archivo):
@@ -76,4 +80,5 @@ else:
             data=archivo_word,
             file_name="Traduccion_TraductorProAI.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
         )

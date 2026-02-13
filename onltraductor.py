@@ -1,59 +1,83 @@
 import streamlit as st
-import requests
+from deep_translator import GoogleTranslator
 import fitz  # PyMuPDF
 from docx import Document
 from io import BytesIO
 
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="TraductorProAI", page_icon="🌐", layout="wide")
 
-# --- CONFIGURACIÓN HUGGING FACE ---
-API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3"
-headers = {"Authorization": f"Bearer {st.secrets['HF_TOKEN']}"}
-
-def consultar_ia(texto, idioma):
-    prompt = f"Translate the following text to {idioma}. Only return the translation, no comments:\n\n{texto}"
-    payload = {"inputs": prompt, "parameters": {"max_new_tokens": 1000}}
-    
-    response = requests.post(API_URL, headers=headers, json=payload)
-    resultado = response.json()
-    
-    # Extraer el texto de la respuesta
-    if isinstance(resultado, list) and 'generated_text' in resultado[0]:
-        return resultado[0]['generated_text'].replace(prompt, "").strip()
-    return "[Error de conexión con la IA]"
-
-# --- FUNCIONES DE DOCUMENTO ---
+# --- FUNCIONES ---
 def extraer_texto_pdf(archivo):
     doc = fitz.open(stream=archivo.read(), filetype="pdf")
-    return "\n".join([p.get_text() for p in doc])
+    texto = ""
+    for pagina in doc:
+        texto += pagina.get_text()
+    return texto
 
-def crear_docx(texto):
+def dividir_por_caracteres(texto, max_caracteres=4500):
+    """Google Translator tiene un límite de 5000 caracteres por pedazo"""
+    return [texto[i:i + max_caracteres] for i in range(0, len(texto), max_caracteres)]
+
+def crear_docx(texto_traducido):
     doc = Document()
-    doc.add_heading('Traducción TraductorProAI', 0)
-    for p in texto.split('\n'):
-        if p.strip(): doc.add_paragraph(p)
-    buf = BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-    return buf
+    doc.add_heading('Traducción - TraductorProAI', 0)
+    for linea in texto_traducido.split('\n'):
+        if linea.strip():
+            doc.add_paragraph(linea)
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
 
 # --- INTERFAZ ---
-st.title("🌐 TraductorProAI (Open Source)")
-st.subheader("Traducción gratuita usando modelos de Hugging Face")
+st.title("🌐 TraductorProAI (Versión Estable)")
+st.markdown("### Traducción ilimitada y gratuita sin API Keys")
 
-archivo = st.file_uploader("Sube tu PDF", type=["pdf"])
-idioma = st.selectbox("Idioma destino", ["Spanish", "English", "French", "German", "Italian"])
+archivo_pdf = st.file_uploader("Carga tu archivo PDF", type=["pdf"])
+idioma_opciones = {
+    "Inglés": "en",
+    "Español": "es",
+    "Francés": "fr",
+    "Alemán": "de",
+    "Italiano": "it",
+    "Portugués": "pt"
+}
+idioma_elegido = st.selectbox("Selecciona el idioma de destino", list(idioma_opciones.keys()))
 
-if archivo and st.button("🚀 Traducir con IA"):
-    with st.spinner("La IA está trabajando..."):
-        texto_original = extraer_texto_pdf(archivo)
-        # Por seguridad con modelos gratis, enviamos los primeros 2000 caracteres
-        traduccion = consultar_ia(texto_original[:2000], idioma)
-        
-        st.success("✅ ¡Traducción lista!")
-        st.text_area("Resultado:", traduccion, height=300)
-        
-        doc_word = crear_docx(traduccion)
-        st.download_button("📥 Descargar Word", doc_word, "Traduccion_IA.docx")
+if archivo_pdf and st.button("🚀 Traducir Ahora"):
+    with st.spinner("Procesando documento..."):
+        try:
+            # 1. Extraer
+            texto_completo = extraer_texto_pdf(archivo_pdf)
+            
+            # 2. Dividir para no superar el límite de Google
+            fragmentos = dividir_por_caracteres(texto_completo)
+            
+            # 3. Traducir
+            traductor = GoogleTranslator(source='auto', target=idioma_opciones[idioma_elegido])
+            
+            traduccion_final = ""
+            progreso = st.progress(0)
+            
+            for idx, frag in enumerate(fragmentos):
+                resultado = traductor.translate(frag)
+                traduccion_final += resultado + "\n"
+                progreso.progress((idx + 1) / len(fragmentos))
+            
+            st.success("✅ ¡Traducción completada!")
+            
+            # 4. Descarga
+            doc_word = crear_docx(traduccion_final)
+            st.download_button(
+                label="📥 Descargar Word (.docx)",
+                data=doc_word,
+                file_name=f"Traduccion_{idioma_elegido}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+            
+            with st.expander("Ver previsualización"):
+                st.write(traduccion_final)
 
-
+        except Exception as e:
+            st.error(f"Ocurrió un error inesperado: {e}")

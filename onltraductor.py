@@ -1,34 +1,26 @@
 import streamlit as st
-import anthropic
+from openai import OpenAI
 import fitz  # PyMuPDF
 from docx import Document
 from io import BytesIO
 import time
 
-
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="TraductorProAI", page_icon="🌐", layout="wide")
 
-
-st.markdown("""
-    <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button { width: 100%; border-radius: 8px; background-color: #ff4b4b; color: white; height: 3em; }
-    </style>
-    """, unsafe_allow_html=True)
-
-
+# --- SEGURIDAD: OPENAI API KEY ---
 client = None
-if "CLAUDE_API_KEY" in st.secrets:
-    api_key = st.secrets["CLAUDE_API_KEY"]
-    client = anthropic.Anthropic(api_key=api_key)
+if "OPENAI_API_KEY" in st.secrets:
+    api_key = st.secrets["OPENAI_API_KEY"]
+    client = OpenAI(api_key=api_key)
 else:
     with st.sidebar:
-        st.title("🔐 Seguridad")
-        api_key = st.text_input("Introduce tu Anthropic API Key", type="password")
+        st.title("🔐 Configuración OpenAI")
+        api_key = st.text_input("Introduce tu OpenAI API Key", type="password")
         if api_key:
-            client = anthropic.Anthropic(api_key=api_key)
+            client = OpenAI(api_key=api_key)
 
-
+# --- FUNCIONES DE LÓGICA ---
 
 def extraer_texto_pdf(archivo):
     doc = fitz.open(stream=archivo.read(), filetype="pdf")
@@ -37,31 +29,29 @@ def extraer_texto_pdf(archivo):
         texto += pagina.get_text()
     return texto
 
-def dividir_texto(texto, limite_palabras=1200):
-    """Divide el texto en fragmentos más pequeños para mejor precisión de Claude"""
+def dividir_texto(texto, limite_palabras=1500):
     palabras = texto.split()
     for i in range(0, len(palabras), limite_palabras):
         yield " ".join(palabras[i:i + limite_palabras])
 
-def traducir_con_claude(bloque, idioma_destino):
+def traducir_con_openai(bloque, idioma_destino):
     try:
-        
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=4000,
-            temperature=0,
-            system=f"Eres un traductor de élite. Traduce el siguiente texto al {idioma_destino}. "
-                   f"Mantén un tono profesional y respeta la estructura de párrafos. "
-                   f"Solo entrega el texto traducido, sin introducciones ni comentarios.",
-            messages=[{"role": "user", "content": bloque}]
+        # Usamos GPT-4o-mini: balance perfecto entre costo y calidad
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": f"Eres un traductor experto. Traduce el siguiente texto al {idioma_destino}. Solo devuelve la traducción final, mantén el formato profesional."},
+                {"role": "user", "content": bloque}
+            ],
+            temperature=0.3
         )
-        return message.content[0].text
+        return response.choices[0].message.content
     except Exception as e:
-        return f"\n[Error en traducción: {str(e)}]\n"
+        return f"\n[Error en OpenAI: {str(e)}]\n"
 
 def crear_docx(texto_traducido):
     doc = Document()
-    doc.add_heading('Traducción Generada por TraductorProAI', 0)
+    doc.add_heading('Traducción Profesional - TraductorProAI', 0)
     for parrafo in texto_traducido.split('\n'):
         if parrafo.strip():
             doc.add_paragraph(parrafo)
@@ -71,52 +61,44 @@ def crear_docx(texto_traducido):
     buffer.seek(0)
     return buffer
 
-
+# --- INTERFAZ ---
 st.title("🌐 TraductorProAI")
-st.markdown("### El poder de Claude 3.5 para tus documentos PDF")
-st.divider()
+st.subheader("Impulsado por ChatGPT (GPT-4o)")
 
 if not client:
-    st.warning("⚠️ Esperando API Key para activar los motores de IA...")
+    st.warning("⚠️ Por favor, configura tu API Key de OpenAI para continuar.")
 else:
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        archivo_pdf = st.file_uploader("Carga tu documento PDF", type=["pdf"])
-    
-    with col2:
-        idioma = st.selectbox("Idioma objetivo", ["Inglés", "Español", "Francés", "Alemán", "Italiano", "Portugués", "Chino", "Japonés"])
+    archivo_pdf = st.file_uploader("Sube tu PDF para traducir", type=["pdf"])
+    idioma = st.selectbox("Idioma de destino", ["Inglés", "Español", "Francés", "Alemán", "Italiano", "Portugués"])
 
-    if archivo_pdf and st.button("🚀 Iniciar Traducción Profesional"):
-        texto_original = extraer_texto_pdf(archivo_pdf)
-        fragmentos = list(dividir_texto(texto_original))
+    if archivo_pdf and st.button("🚀 Iniciar Traducción Inteligente"):
+        texto_completo = extraer_texto_pdf(archivo_pdf)
+        fragmentos = list(dividir_texto(texto_completo))
         
-        st.info(f"Documento analizado. Se procesará en {len(fragmentos)} bloques de alta fidelidad.")
+        st.info(f"Documento listo. Traduciendo en {len(fragmentos)} bloques...")
         
-        traduccion_acumulada = ""
-        progreso = st.progress(0)
-        
+        traduccion_final = ""
+        barra = st.progress(0)
+
         for idx, bloque in enumerate(fragmentos):
-            with st.spinner(f"Traduciendo bloque {idx+1} de {len(fragmentos)}..."):
-                resultado = traducir_con_claude(bloque, idioma)
-                traduccion_acumulada += resultado + "\n\n"
-                
-                
-                progreso.progress((idx + 1) / len(fragmentos))
-                time.sleep(0.5) 
+            with st.spinner(f"Procesando bloque {idx+1} de {len(fragmentos)}..."):
+                resultado = traducir_con_openai(bloque, idioma)
+                traduccion_final += resultado + "\n\n"
+                barra.progress((idx + 1) / len(fragmentos))
+                # OpenAI es muy rápido, con 0.5s de espera es suficiente
+                time.sleep(0.5)
 
-        st.success("✅ ¡Traducción finalizada con éxito!")
+        st.success("✅ ¡Traducción terminada!")
         
-      
-        with st.expander("Ver previsualización del texto"):
-            st.write(traduccion_acumulada)
-        
-        
-        doc_final = crear_docx(traduccion_acumulada)
+        with st.expander("Previsualizar traducción"):
+            st.write(traduccion_final)
+            
+        doc_word = crear_docx(traduccion_final)
         
         st.download_button(
-            label="📥 Descargar Documento Word (.docx)",
-            data=doc_final,
-            file_name=f"Traduccion_{idioma}_TraductorProAI.docx",
+            label="📥 Descargar Documento Word",
+            data=doc_word,
+            file_name=f"Traduccion_ChatGPT_{idioma}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
+

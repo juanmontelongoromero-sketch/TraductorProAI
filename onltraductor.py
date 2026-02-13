@@ -30,10 +30,19 @@ def dividir_texto(texto, limite_palabras=3000):
     for i in range(0, len(palabras), limite_palabras):
         yield " ".join(palabras[i:i + limite_palabras])
 
-def traducir_bloque(modelo, bloque, idioma_destino):
-    prompt = f"Traduce el siguiente texto al {idioma_destino}. Solo entrega la traducción:\n\n{bloque}"
-    response = modelo.generate_content(prompt)
-    return response.text
+def traducir_bloque(bloque, idioma_destino):
+    modelos_a_probar = ['gemini-1.5-flash', 'models/gemini-1.5-flash', 'gemini-pro']
+    
+    for nombre_modelo in modelos_a_probar:
+        try:
+            modelo = genai.GenerativeModel(nombre_modelo)
+            prompt = f"Traduce el siguiente texto al {idioma_destino}. Solo entrega la traducción:\n\n{bloque}"
+            response = modelo.generate_content(prompt)
+            return response.text
+        except Exception:
+            continue 
+            
+    return "\n[Error: No se pudo conectar con ningún modelo de Gemini. Revisa tu API Key o región.]\n"
 
 def crear_docx(texto_traducido):
     doc = Document()
@@ -82,3 +91,4 @@ else:
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
         )
+
